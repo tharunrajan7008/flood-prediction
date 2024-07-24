@@ -1,0 +1,103 @@
+import os
+import sys
+from tempfile import NamedTemporaryFile
+from urllib.request import urlopen
+from urllib.parse import unquote, urlparse
+from urllib.error import HTTPError
+from zipfile import ZipFile
+import tarfile
+import shutil
+
+CHUNK_SIZE = 40960
+DATA_SOURCE_MAPPING = 'flood-prediction-dataset:https%3A%2F%2Fstorage.googleapis.com%2Fkaggle-data-sets%2F5287820%2F8794308%2Fbundle%2Farchive.zip%3FX-Goog-Algorithm%3DGOOG4-RSA-SHA256%26X-Goog-Credential%3Dgcp-kaggle-com%2540kaggle-161607.iam.gserviceaccount.com%252F20240717%252Fauto%252Fstorage%252Fgoog4_request%26X-Goog-Date%3D20240717T174119Z%26X-Goog-Expires%3D259200%26X-Goog-SignedHeaders%3Dhost%26X-Goog-Signature%3D1d323d78a5998ea754e049e816250d262897a83eb273b34fea3d1729fd434e09d588ca0d1a69234733f5c15d710930877260172883ccef8ab668338efb8ad5af318c33c666ca1c83546b9343dc29bc004f02b63c6b05b33d1866129446bf5064eaea42885841702d697687ba5816f034156d9a5456f548c58d2d9096ea1689ea80653754ab489accb880ffcec151bd329181c7c08c36bc68e74a38071eadb4d3e9599da601a83c28268e348b65906a1cb3ab4c0db3af5876288254cac0a60e4d6bd985a3bdc3199be0559589203942b8e76574e9d7b97fd72795ca85b048ad4269938dae754280ca9e78465939a9e6a39f9ad2009cb59705a23b4dc01c49d0b0'
+
+KAGGLE_INPUT_PATH='/kaggle/input'
+KAGGLE_WORKING_PATH='/kaggle/working'
+KAGGLE_SYMLINK='kaggle'
+
+!umount /kaggle/input/ 2> /dev/null
+shutil.rmtree('/kaggle/input', ignore_errors=True)
+os.makedirs(KAGGLE_INPUT_PATH, 0o777, exist_ok=True)
+os.makedirs(KAGGLE_WORKING_PATH, 0o777, exist_ok=True)
+
+try:
+  os.symlink(KAGGLE_INPUT_PATH, os.path.join("..", 'input'), target_is_directory=True)
+except FileExistsError:
+  pass
+try:
+  os.symlink(KAGGLE_WORKING_PATH, os.path.join("..", 'working'), target_is_directory=True)
+except FileExistsError:
+  pass
+
+for data_source_mapping in DATA_SOURCE_MAPPING.split(','):
+    directory, download_url_encoded = data_source_mapping.split(':')
+    download_url = unquote(download_url_encoded)
+    filename = urlparse(download_url).path
+    destination_path = os.path.join(KAGGLE_INPUT_PATH, directory)
+    try:
+        with urlopen(download_url) as fileres, NamedTemporaryFile() as tfile:
+            total_length = fileres.headers['content-length']
+            print(f'Downloading {directory}, {total_length} bytes compressed')
+            dl = 0
+            data = fileres.read(CHUNK_SIZE)
+            while len(data) > 0:
+                dl += len(data)
+                tfile.write(data)
+                done = int(50 * dl / int(total_length))
+                sys.stdout.write(f"\r[{'=' * done}{' ' * (50-done)}] {dl} bytes downloaded")
+                sys.stdout.flush()
+                data = fileres.read(CHUNK_SIZE)
+            if filename.endswith('.zip'):
+              with ZipFile(tfile) as zfile:
+                zfile.extractall(destination_path)
+            else:
+              with tarfile.open(tfile.name) as tarfile:
+                tarfile.extractall(destination_path)
+            print(f'\nDownloaded and uncompressed: {directory}')
+    except HTTPError as e:
+        print(f'Failed to load (likely expired) {download_url} to path {destination_path}')
+        continue
+    except OSError as e:
+        print(f'Failed to load {download_url} to path {destination_path}')
+        continue
+
+print('Data source import complete.')
+# This Python 3 environment comes with many helpful analytics libraries installed
+# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python
+# For example, here's several helpful packages to load
+
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory
+
+import os
+for dirname, _, filenames in os.walk('/kaggle/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All"
+# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+df = pd.read_csv('/content/flood.csv')
+corr = df.corr()
+sns.heatmap(corr, annot = False)
+from xgboost import XGBRegressor
+import sklearn.metrics as mt
+xgb = XGBRegressor(colsample_bytree= 0.8, learning_rate= 0.4, max_depth= 3, n_estimators= 700, subsample= 1.0, random_state =0)
+model = xgb.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+r2 = mt.r2_score(y_test, y_pred)
+mae = mt.mean_absolute_error(y_test, y_pred)
+rmse = np.sqrt(mt.mean_squared_error(y_test, y_pred))
+print("R2 =",r2, "RMSE =",rmse)
+plt.figure(figsize=(40, 20))
+floodprobability = df['FloodProbability'].value_counts()
+sns.barplot(x = floodprobability.index, y = floodprobability.values)
+plt.show()
